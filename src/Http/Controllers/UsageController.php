@@ -13,6 +13,7 @@ use Liberu\Billing\Usage\Actions\CorrectUsage;
 use Liberu\Billing\Usage\Actions\DefineMeter;
 use Liberu\Billing\Usage\Actions\IngestUsage;
 use Liberu\Billing\Usage\Actions\RateUsage;
+use Liberu\Billing\Usage\Actions\TransitionMeter;
 use Liberu\Billing\Usage\Models\Meter;
 use Liberu\Billing\Usage\Models\UsageRecord;
 use Liberu\Billing\Usage\Queries\AggregateUsage;
@@ -31,14 +32,28 @@ final class UsageController extends Controller
                 ? $query->whereNull('team_id')
                 : $query->whereNull('team_id')->orWhere('team_id', $team))
             ->latest('id')
-            ->paginate($request->integer('per_page', 25));
+            ->paginate($this->pageSize($request));
 
         return response()->json(['data' => $result->getCollection()->map(fn (Meter $meter): array => $this->meter($meter))->values(), 'meta' => ['current_page' => $result->currentPage(), 'last_page' => $result->lastPage()]]);
+    }
+
+    private function pageSize(Request $request): int
+    {
+        return min(max((int) $request->input('page.size', $request->integer('per_page', 25)), 1), 100);
     }
 
     public function storeMeter(Request $request, DefineMeter $define): JsonResponse
     {
         return $this->defineMeter($request, $define);
+    }
+
+    public function transitionMeter(Request $request, Meter $meter, TransitionMeter $transition): JsonResponse
+    {
+        $meter = $this->forCurrentTeam($request, $meter->getKey());
+        Gate::authorize('update', $meter);
+        $data = $request->validate(['active' => ['required', 'boolean']]);
+
+        return response()->json(['data' => $this->meter($transition->execute($meter, (bool) $data['active']))]);
     }
 
     public function defineMeter(Request $request, DefineMeter $define): JsonResponse
